@@ -8,6 +8,8 @@
 #define F_CPU 32768
 
 #include <avr/io.h>
+#include <avr/interrupt.h>
+#include <avr/sleep.h>
 #include <util/delay.h>
 
 // #define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
@@ -36,12 +38,39 @@ const uint16_t DIGIT2B[10] = { 3584, 512, 3072, 1536, 512, 1536, 3584, 512, 3584
 const uint16_t DIGIT3A[10] = { 28672, 4096, 45056, 45056, 53248, 57344, 57344, 12288, 61440, 61440 };
 const uint16_t DIGIT3B[10] = { 28672, 4096, 24576, 12288, 4096, 12288, 28672, 4096, 28672, 12288 };
 
-uint8_t t3 = 0; // hours X10
-uint8_t t2 = 0; // hours  X1
-uint8_t t1 = 0; // mins  X10
-uint8_t t0 = 0; // mins   X1
+static uint8_t t3 = 0; // hours X10
+static uint8_t t2 = 0; // hours  X1
+static uint8_t t1 = 0; // mins  X10
+static uint8_t t0 = 0; // mins   X1
 
-#define short_delay() _delay_us(5);
+static uint8_t hSec = 0; // half-seconds
+
+static uint8_t lcdP = 0; // polarity of LCD
+
+void update_time(void) {
+  hSec++;
+
+  if (hSec >= 120) {
+    hSec = 0;
+    t0++;
+  }
+  if (t0 >= 10) {
+    t0 = 0;
+    t1++;
+  }
+  if (t1 >= 6) {
+    t1 = 0;
+    t2++;
+  }
+  if (t2 >= 10) {
+    t2 = 0;
+    t3++;
+  }
+  if (t3 >= 1 && t2 >= 2) {
+    t3 = 0;
+    t2 = 0;
+  }
+}
 
 void update_lcd(void) {
   uint16_t lcdA = 0; // LCD Content A
@@ -50,7 +79,6 @@ void update_lcd(void) {
   uint16_t dB = 0;   // LCD Content with polarity
   uint16_t i = 0;    // temp counter
   uint16_t d = 0;    // temp
-  uint16_t lcdP = 0; // polarity of LCD
 
   lcdA = DIGIT0A[t0] | DIGIT1A[t1] | DIGIT2A[t2];
   lcdB = DIGIT0B[t0] | DIGIT1B[t1] | DIGIT2B[t2];
@@ -60,7 +88,7 @@ void update_lcd(void) {
     lcdB |= DIGIT3B[t3];
   }
 
-  lcdA |= 1<<7; ////////
+  if (hSec & 1) lcdA |= 1<<7;
 
   if (lcdP) {
     dA = lcdA;
@@ -73,7 +101,6 @@ void update_lcd(void) {
   }
   
   gpio_latch_low();
-  short_delay();
 
   // output
   i = 0;
@@ -90,17 +117,13 @@ void update_lcd(void) {
       } else {
       gpio_data_low();
     }
-
-    short_delay();
     
     gpio_clock_high();
-    short_delay();
 
     d = d >> 1;
     i++;
   }
 
-  short_delay();
   gpio_latch_high();
 
   if (lcdP) {
@@ -152,19 +175,37 @@ Power usage notes:
   - disable_inputs + use_32k_crystal + while(1)            => 15.7 uA
   - disable_inputs + use_32k_crystal + update_lcd [NO LCD] => 16.9 uA
   - disable_inputs + use_32k_crystal + update_lcd [W/ LCD] => 17.7 uA
+                                     + change digits       => 18.3 uA
+                                     + Idle/Standby Sleep  => ~7.0 uA
 */
+
+ISR(RTC_PIT_vect) {
+  // Clear flag
+  RTC_PITINTFLAGS = 0x01;
+
+  update_time();
+  update_lcd();
+}
 
 int main(void) {
   disable_inputs();
   use_32k_crystal();
+  
+  // Enable RTC
+  RTC_CLKSEL = 0x02; // Use Crystal
+  RTC_PITINTCTRL = 0x01; // Enable interrupt
+  RTC_PITCTRLA = RTC_PERIOD_CYC16384_gc | RTC_PITEN_bm; // Enable every 16384
 
   // port direction
   PORTA_DIRSET = (1 << 3) | (1 << 4) | (1 << 5) | (1 << 7);
 
-  // main loop
+  // Enable interrupts
+  sei();
+
+  // go to sleep
   while (1) {
-    update_lcd();
-    t0++;
-    if (t0 >= 9) t0=0;
+    set_sleep_mode(SLEEP_MODE_IDLE);
+    sleep_enable();
+    sleep_cpu();
   }
 }
