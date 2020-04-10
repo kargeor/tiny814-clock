@@ -47,6 +47,10 @@ static uint8_t hSec = 0; // half-seconds
 
 static uint8_t lcdP = 0; // polarity of LCD
 
+static uint8_t pixels[9] = {10,  0,  0,
+                             0, 10,  0,
+                             0,  0, 10};
+
 void update_time(void) {
   hSec++;
 
@@ -133,31 +137,86 @@ void update_lcd(void) {
   }
 }
 
-void use_32k_crystal(void) {
-  // Set clock to use 32k crystal
+void start_and_use_32k_crystal(void) {
   CPU_CCP = CCP_IOREG_gc;                      // Un-protect
   CLKCTRL_XOSC32KCTRLA = (1 << 0) | (1 << 1);  // Enable & Run Standby 32k crystal
-  
+
   CPU_CCP = CCP_IOREG_gc;   // Un-protect
   CLKCTRL_MCLKCTRLA = 0x02; // Use 32k crystal for main clock
   
   while ((CLKCTRL_MCLKSTATUS & CLKCTRL_XOSC32KS_bm) == 0); // wait for stable 32k crystal
+  while ((CLKCTRL_MCLKSTATUS & CLKCTRL_SOSC_bm) != 0); // wait for main clock switch
   
   CPU_CCP = CCP_IOREG_gc; // Un-protect
   CLKCTRL_MCLKCTRLB = 0;  // Disable pre-scaler
 }
 
-/*
-void use_32k_rc(void) {
+void use_32k_crystal(void) {
   CPU_CCP = CCP_IOREG_gc;   // Un-protect
-  CLKCTRL_MCLKCTRLA = 0x01; // Use 32k RC for main clock
+  CLKCTRL_MCLKCTRLA = 0x02; // Use 32k crystal for main clock
   
-  while ((CLKCTRL_MCLKSTATUS & CLKCTRL_OSC32KS_bm) == 0); // wait for stable 32k RC
-  
-  CPU_CCP = CCP_IOREG_gc; // Un-protect
-  CLKCTRL_MCLKCTRLB = 0;  // Disable pre-scaler
+  while ((CLKCTRL_MCLKSTATUS & CLKCTRL_SOSC_bm) != 0); // wait for main clock switch
 }
-*/
+
+void use_int_osc(void) {
+  CPU_CCP = CCP_IOREG_gc;   // Un-protect
+  CLKCTRL_MCLKCTRLA = 0x00; // Use internal 16/20Mhz osc for main clock
+  
+  while ((CLKCTRL_MCLKSTATUS & CLKCTRL_SOSC_bm) != 0); // wait for main clock switch
+}
+
+void neoPixel_output(void) {
+  // WS2811 and WS2812 have different hi/lo duty cycles; this is
+  // similar but NOT an exact copy of the prior 400-on-8 code.
+
+  // 20 inst. clocks per bit: HHHHHxxxxxxxxLLLLLLL
+  // ST instructions:         ^   ^        ^       (T=0, 5, 13)
+
+  // Output is PB1
+  volatile uint8_t hi   = PORTB_OUT | (1 << 1);
+  volatile uint8_t lo   = PORTB_OUT & ~(1 << 1);
+  volatile uint8_t next = lo;
+  volatile uint8_t bit  = 8;
+  
+  volatile uint16_t i    = 9;      // bytes total
+  volatile uint8_t  *ptr = pixels; // Pointer to next byte
+  volatile uint8_t  b    =*ptr++;  // Current byte value
+
+  asm volatile(
+    "head20:"                   "\n\t" // Clk  Pseudocode    (T =  0)
+    "st   %a[port],  %[hi]"    "\n\t" // 2    PORT = hi     (T =  2)
+    "sbrc %[byte],  7"         "\n\t" // 1-2  if(b & 128)
+    "mov  %[next], %[hi]"     "\n\t" // 0-1   next = hi    (T =  4)
+    "dec  %[bit]"              "\n\t" // 1    bit--         (T =  5)
+    "st   %a[port],  %[next]"  "\n\t" // 2    PORT = next   (T =  7)
+    "mov  %[next] ,  %[lo]"    "\n\t" // 1    next = lo     (T =  8)
+    "breq nextbyte20"          "\n\t" // 1-2  if(bit == 0) (from dec above)
+    "rol  %[byte]"             "\n\t" // 1    b <<= 1       (T = 10)
+    "rjmp .+0"                 "\n\t" // 2    nop nop       (T = 12)
+    "nop"                      "\n\t" // 1    nop           (T = 13)
+    "st   %a[port],  %[lo]"    "\n\t" // 2    PORT = lo     (T = 15)
+    "nop"                      "\n\t" // 1    nop           (T = 16)
+    "rjmp .+0"                 "\n\t" // 2    nop nop       (T = 18)
+    "rjmp head20"              "\n\t" // 2    -> head20 (next bit out)
+    "nextbyte20:"               "\n\t" //                    (T = 10)
+    "ldi  %[bit]  ,  8"        "\n\t" // 1    bit = 8       (T = 11)
+    "ld   %[byte] ,  %a[ptr]+" "\n\t" // 2    b = *ptr++    (T = 13)
+    "st   %a[port], %[lo]"     "\n\t" // 2    PORT = lo     (T = 15)
+    "nop"                      "\n\t" // 1    nop           (T = 16)
+    "sbiw %[count], 1"         "\n\t" // 2    i--           (T = 18)
+    "brne head20"             "\n"   // 2    if(i != 0) -> (next byte)
+  :
+    [port]  "+e" (PORTB_OUT),
+    [byte]  "+r" (b),
+    [bit]   "+r" (bit),
+    [next]  "+r" (next),
+    [count] "+w" (i)
+  :
+    [ptr]    "e" (ptr),
+    [hi]     "r" (hi),
+    [lo]     "r" (lo)
+  );
+}
 
 // Needed for low power
 void disable_inputs(void) {
@@ -189,7 +248,7 @@ ISR(RTC_PIT_vect) {
 
 int main(void) {
   disable_inputs();
-  use_32k_crystal();
+  start_and_use_32k_crystal();
   
   // Enable RTC
   RTC_CLKSEL = 0x02; // Use Crystal
@@ -197,7 +256,8 @@ int main(void) {
   RTC_PITCTRLA = RTC_PERIOD_CYC16384_gc | RTC_PITEN_bm; // Enable every 16384
 
   // port direction
-  PORTA_DIRSET = (1 << 3) | (1 << 4) | (1 << 5) | (1 << 7);
+  PORTA_DIRSET = (1 << 3) | (1 << 4) | (1 << 5) | (1 << 7); // LCD
+  PORTB_DIRSET = (1 << 0) | (1 << 1); // NeoPIXEL
 
   // Enable interrupts
   sei();
