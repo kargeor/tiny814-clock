@@ -47,9 +47,26 @@ static uint8_t hSec = 0; // half-seconds
 
 static uint8_t lcdP = 0; // polarity of LCD
 
-static uint8_t pixels[9] = {10,  0,  0,
-                             0, 10,  0,
-                             0,  0, 10};
+/*
+  Current test:
+  - All Off    =>  1.50 mA (Fast CPU / NO Sleep)
+  - 1x G10     =>  1.65 mA
+  - 1x G50     =>  3.50 mA
+  - 1x G100    =>  6.20 mA
+  - 2x G100    => 10.90 mA
+  - 3x G100    => 15.50 mA
+  - 1x R10     =>  1.64 mA
+  - 1x R50     =>  3.55 mA
+  - 1x R100    =>  6.25 mA
+  - 1x B10     =>  1.65 mA
+  - 1x B50     =>  3.50 mA
+  - 1x B100    =>  6.20 mA
+  - ALL 100    =>  30+ mA *NOT STABLE*
+  - 3x 2x 75   =>  20+ mA *NOT STABLE*
+*/
+static uint8_t pixels[9] = {0,  50,  50,
+                            0,  50,  50,
+                            0,  50,  50};
 
 void update_time(void) {
   hSec++;
@@ -173,14 +190,15 @@ void neoPixel_output(void) {
   // ST instructions:         ^   ^        ^       (T=0, 5, 13)
 
   // Output is PB1
-  volatile uint8_t hi   = PORTB_OUT | (1 << 1);
-  volatile uint8_t lo   = PORTB_OUT & ~(1 << 1);
-  volatile uint8_t next = lo;
-  volatile uint8_t bit  = 8;
+  volatile uint16_t *port = &PORTB_OUT;
+  volatile uint8_t  hi   = PORTB_OUT | (1 << 1);
+  volatile uint8_t  lo   = PORTB_OUT & ~(1 << 1);
+  volatile uint8_t  next = lo;
+  volatile uint8_t  bit  = 8;
   
   volatile uint16_t i    = 9;      // bytes total
   volatile uint8_t  *ptr = pixels; // Pointer to next byte
-  volatile uint8_t  b    =*ptr++;  // Current byte value
+  volatile uint8_t  b    = *ptr++; // Current byte value
 
   asm volatile(
     "head20:"                   "\n\t" // Clk  Pseudocode    (T =  0)
@@ -206,7 +224,7 @@ void neoPixel_output(void) {
     "sbiw %[count], 1"         "\n\t" // 2    i--           (T = 18)
     "brne head20"             "\n"   // 2    if(i != 0) -> (next byte)
   :
-    [port]  "+e" (PORTB_OUT),
+    [port]  "+e" (port),
     [byte]  "+r" (b),
     [bit]   "+r" (bit),
     [next]  "+r" (next),
@@ -264,8 +282,20 @@ int main(void) {
 
   // go to sleep
   while (1) {
-    set_sleep_mode(SLEEP_MODE_IDLE);
-    sleep_enable();
-    sleep_cpu();
+    // set_sleep_mode(SLEEP_MODE_IDLE);
+    // sleep_enable();
+    // sleep_cpu();
+    PORTB_OUTSET = 1 << 0;
+    cli();
+    use_int_osc();
+    neoPixel_output();
+    _delay_ms(900);
+    use_32k_crystal();
+    sei();
+    _delay_ms(900);
+    _delay_ms(900);
+    _delay_ms(900);
+    _delay_ms(900);
+    _delay_ms(900);
   }
 }
