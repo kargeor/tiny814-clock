@@ -5,7 +5,7 @@
  * Author : George
  */ 
 
-#define F_CPU 32768
+#define F_CPU 16000000
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -236,6 +236,69 @@ void neoPixel_output(void) {
   );
 }
 
+void dac_play(void) {
+  // change speed
+  cli();
+  use_int_osc();
+  
+  // turn on DAC and select VREF
+  VREF_CTRLA = 0x03; // 4.3V
+  DAC0_CTRLA = DAC_ENABLE_bm | DAC_OUTEN_bm;
+  
+  uint16_t i = 0;
+  for (i = 0; i < 2000; i++) {
+    DAC0_DATA = 0x00;
+    _delay_us(200);
+    DAC0_DATA = 0xFF;
+    _delay_us(200);
+  }
+  for (i = 0; i < 2000; i++) {
+    DAC0_DATA = 0x00;
+    _delay_us(300);
+    DAC0_DATA = 0xFF;
+    _delay_us(300);
+  }
+  
+  // disable DAC
+  DAC0_CTRLA = 0x00;
+  VREF_CTRLA = 0x00;
+  
+  // restore speed
+  use_32k_crystal();
+  sei();
+}
+
+/*
+void speaker_play(void) {
+  // change speed
+  cli();
+  use_int_osc();
+  
+  // make output
+  PORTA_DIRSET = (1 << 6);
+  
+  uint16_t i = 0;
+  for (i = 0; i < 2000; i++) {
+    PORTA_OUTCLR = (1 << 6);
+    _delay_us(200);
+    PORTA_OUTSET = (1 << 6);
+    _delay_us(200);
+  }
+  for (i = 0; i < 2000; i++) {
+    PORTA_OUTCLR = (1 << 6);
+    _delay_us(300);
+    PORTA_OUTSET = (1 << 6);
+    _delay_us(300);
+  }
+  
+  // disable output
+  PORTA_DIRCLR = (1 << 6);
+  
+  // restore speed
+  use_32k_crystal();
+  sei();
+} */
+
 // Needed for low power
 void disable_inputs(void) {
 	for (uint8_t i = 0; i < 8; i++) {
@@ -264,6 +327,12 @@ ISR(RTC_PIT_vect) {
   update_lcd();
 }
 
+ISR(PORTA_PORT_vect) {
+  PORTA_INTFLAGS = (1 << 2);
+
+  dac_play();
+}
+
 int main(void) {
   disable_inputs();
   start_and_use_32k_crystal();
@@ -276,15 +345,19 @@ int main(void) {
   // port direction
   PORTA_DIRSET = (1 << 3) | (1 << 4) | (1 << 5) | (1 << 7); // LCD
   PORTB_DIRSET = (1 << 0) | (1 << 1); // NeoPIXEL
+  
+  // button press interrupt
+  PORTA_PIN2CTRL = PORT_PULLUPEN_bm | PORT_ISC_FALLING_gc;
 
   // Enable interrupts
   sei();
 
   // go to sleep
   while (1) {
-    // set_sleep_mode(SLEEP_MODE_IDLE);
-    // sleep_enable();
-    // sleep_cpu();
+    set_sleep_mode(SLEEP_MODE_IDLE);
+    sleep_enable();
+    sleep_cpu();
+    /*
     PORTB_OUTSET = 1 << 0;
     cli();
     use_int_osc();
@@ -297,5 +370,6 @@ int main(void) {
     _delay_ms(900);
     _delay_ms(900);
     _delay_ms(900);
+    */
   }
 }
