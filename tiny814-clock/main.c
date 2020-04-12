@@ -64,9 +64,22 @@ static uint8_t lcdP = 0; // polarity of LCD
   - ALL 100    =>  30+ mA *NOT STABLE*
   - 3x 2x 75   =>  20+ mA *NOT STABLE*
 */
-static uint8_t pixels[9] = {0,  50,  50,
-                            0,  50,  50,
-                            0,  50,  50};
+static uint8_t pixels[9] = {0,  0,  0,
+                            0,  0,  0,
+                            0,  0,  0};
+
+#define COLORS_COUNT 5
+static uint8_t colors[3 * COLORS_COUNT] =
+{
+  50, 0,  0,
+  0, 50,  0,
+  0,  0, 50,
+  50, 0, 50,
+  0, 50, 50,
+};
+
+static uint8_t current_color = 0;
+static volatile uint8_t color_time_out = 0; // in half-seconds
 
 void update_time(void) {
   hSec++;
@@ -236,6 +249,31 @@ void neoPixel_output(void) {
   );
 }
 
+void output_color(void) {
+  // enable NeoPixels
+  PORTB_OUTSET = 1 << 0;
+  
+  // fast speed
+  cli();
+  use_int_osc();
+
+  // copy colors
+  pixels[0] = colors[3 * current_color + 0];
+  pixels[1] = colors[3 * current_color + 1];
+  pixels[2] = colors[3 * current_color + 2];
+  pixels[3] = colors[3 * current_color + 0];
+  pixels[4] = colors[3 * current_color + 1];
+  pixels[5] = colors[3 * current_color + 2];
+  pixels[6] = colors[3 * current_color + 0];
+  pixels[7] = colors[3 * current_color + 1];
+  pixels[8] = colors[3 * current_color + 2];
+  
+  neoPixel_output();
+
+  // slow speed
+  use_32k_crystal();
+}
+
 void dac_play(void) {
   // change speed
   cli();
@@ -265,7 +303,7 @@ void dac_play(void) {
   
   // restore speed
   use_32k_crystal();
-  sei();
+  // sei(); ??
 }
 
 /*
@@ -325,12 +363,25 @@ ISR(RTC_PIT_vect) {
 
   update_time();
   update_lcd();
+  
+  if (color_time_out > 0) {
+    color_time_out--;
+    if (color_time_out == 0) {
+      PORTB_OUTCLR = 1 << 0;
+    }
+  }
 }
 
 ISR(PORTA_PORT_vect) {
   PORTA_INTFLAGS = (1 << 2);
 
-  dac_play();
+  if (color_time_out > 0) {
+    current_color++;
+    if (current_color == COLORS_COUNT) current_color = 0;
+  }
+
+  output_color();
+  color_time_out = 10; // 5 seconds
 }
 
 int main(void) {
@@ -357,19 +408,5 @@ int main(void) {
     set_sleep_mode(SLEEP_MODE_IDLE);
     sleep_enable();
     sleep_cpu();
-    /*
-    PORTB_OUTSET = 1 << 0;
-    cli();
-    use_int_osc();
-    neoPixel_output();
-    _delay_ms(900);
-    use_32k_crystal();
-    sei();
-    _delay_ms(900);
-    _delay_ms(900);
-    _delay_ms(900);
-    _delay_ms(900);
-    _delay_ms(900);
-    */
   }
 }
