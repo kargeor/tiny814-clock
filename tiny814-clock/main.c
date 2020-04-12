@@ -29,23 +29,23 @@
 #define gpio_lcd_com_low() PORTA_OUTCLR = 1 << 3;
 //
 
-const uint16_t DIGIT0A[10] = { 3, 0, 5, 5, 6, 7, 7, 1, 7, 7 };
-const uint16_t DIGIT0B[10] = { 15, 3, 13, 7, 3, 6, 14, 3, 15, 7 };
-const uint16_t DIGIT1A[10] = { 56, 8, 88, 88, 104, 112, 112, 24, 120, 120 };
-const uint16_t DIGIT1B[10] = { 224, 32, 192, 96, 32, 96, 224, 32, 224, 96 };
-const uint16_t DIGIT2A[10] = { 1792, 256, 2816, 2816, 3328, 3584, 3584, 768, 3840, 3840 };
-const uint16_t DIGIT2B[10] = { 3584, 512, 3072, 1536, 512, 1536, 3584, 512, 3584, 1536 };
-const uint16_t DIGIT3A[10] = { 28672, 4096, 45056, 45056, 53248, 57344, 57344, 12288, 61440, 61440 };
-const uint16_t DIGIT3B[10] = { 28672, 4096, 24576, 12288, 4096, 12288, 28672, 4096, 28672, 12288 };
+static const uint16_t DIGIT0A[10] = { 3, 0, 5, 5, 6, 7, 7, 1, 7, 7 };
+static const uint16_t DIGIT0B[10] = { 15, 3, 13, 7, 3, 6, 14, 3, 15, 7 };
+static const uint16_t DIGIT1A[10] = { 56, 8, 88, 88, 104, 112, 112, 24, 120, 120 };
+static const uint16_t DIGIT1B[10] = { 224, 32, 192, 96, 32, 96, 224, 32, 224, 96 };
+static const uint16_t DIGIT2A[10] = { 1792, 256, 2816, 2816, 3328, 3584, 3584, 768, 3840, 3840 };
+static const uint16_t DIGIT2B[10] = { 3584, 512, 3072, 1536, 512, 1536, 3584, 512, 3584, 1536 };
+static const uint16_t DIGIT3A[10] = { 28672, 4096, 45056, 45056, 53248, 57344, 57344, 12288, 61440, 61440 };
+static const uint16_t DIGIT3B[10] = { 28672, 4096, 24576, 12288, 4096, 12288, 28672, 4096, 28672, 12288 };
 
-static uint8_t t3 = 0; // hours X10
-static uint8_t t2 = 0; // hours  X1
-static uint8_t t1 = 0; // mins  X10
-static uint8_t t0 = 0; // mins   X1
+static volatile uint8_t t3 = 0; // hours X10
+static volatile uint8_t t2 = 0; // hours  X1
+static volatile uint8_t t1 = 0; // mins  X10
+static volatile uint8_t t0 = 0; // mins   X1
 
-static uint8_t hSec = 0; // half-seconds
+static volatile uint8_t hSec = 0; // half-seconds
 
-static uint8_t lcdP = 0; // polarity of LCD
+static volatile uint8_t lcdP = 0; // polarity of LCD
 
 /*
   Current test:
@@ -64,12 +64,12 @@ static uint8_t lcdP = 0; // polarity of LCD
   - ALL 100    =>  30+ mA *NOT STABLE*
   - 3x 2x 75   =>  20+ mA *NOT STABLE*
 */
-static uint8_t pixels[9] = {0,  0,  0,
-                            0,  0,  0,
-                            0,  0,  0};
+static volatile uint8_t pixels[9] = {0,  0,  0,
+                                     0,  0,  0,
+                                     0,  0,  0};
 
 #define COLORS_COUNT 5
-static uint8_t colors[3 * COLORS_COUNT] =
+static const uint8_t colors[3 * COLORS_COUNT] =
 {
   50, 0,  0,
   0, 50,  0,
@@ -78,7 +78,7 @@ static uint8_t colors[3 * COLORS_COUNT] =
   0, 50, 50,
 };
 
-static uint8_t current_color = 0;
+static volatile uint8_t current_color = 0;
 static volatile uint8_t color_time_out = 0; // in half-seconds
 
 void update_time(void) {
@@ -337,6 +337,15 @@ void speaker_play(void) {
   sei();
 } */
 
+void enable_adc(void) {
+  ADC0_INTCTRL = ADC_RESRDY_bm;                                     // Result Ready interrupt
+  ADC0_MUXPOS = 0x01;                                               // PA1
+  ADC0_CTRLC = ADC_SAMPCAP_bm | ADC_REFSEL_VDDREF_gc;               // Use VDD Ref
+  ADC0_CTRLB = ADC_SAMPNUM_ACC64_gc;                                // Accumulate 64 samples
+  ADC0_CTRLA = ADC_RESSEL_8BIT_gc | ADC_FREERUN_bm | ADC_ENABLE_bm; // Enable + Free Run
+  ADC0_COMMAND = ADC_STCONV_bm;                                     // Start
+}
+
 // Needed for low power
 void disable_inputs(void) {
 	for (uint8_t i = 0; i < 8; i++) {
@@ -382,6 +391,15 @@ ISR(PORTA_PORT_vect) {
 
   output_color();
   color_time_out = 10; // 5 seconds
+  enable_adc();
+}
+
+/*
+  PU only      => 0xFF (4.50 V) ~20 kOhm
+  1k pull down => 0x0D (0.23 V)
+*/
+ISR(ADC0_RESRDY_vect) {
+  ADC0_INTFLAGS = ADC_RESRDY_bm;
 }
 
 int main(void) {
@@ -397,8 +415,11 @@ int main(void) {
   PORTA_DIRSET = (1 << 3) | (1 << 4) | (1 << 5) | (1 << 7); // LCD
   PORTB_DIRSET = (1 << 0) | (1 << 1); // NeoPIXEL
   
-  // button press interrupt
+  // button press interrupt (PA2)
   PORTA_PIN2CTRL = PORT_PULLUPEN_bm | PORT_ISC_FALLING_gc;
+  
+  // Pull-Up for 3-buttons (PA1)
+  PORTA_PIN1CTRL = PORT_PULLUPEN_bm;
 
   // Enable interrupts
   sei();
