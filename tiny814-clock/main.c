@@ -349,6 +349,12 @@ void enable_adc(void) {
   ADC0_COMMAND = ADC_STCONV_bm;                                     // Start
 }
 
+void disable_adc(void) {
+  ADC0_INTCTRL = 0;      // No interrupts
+  ADC0_CTRLA = 0;        // Disable
+  ADC0_INTFLAGS = 0xFF;  // Clear any interrupts
+}  
+
 // Needed for low power
 void disable_inputs(void) {
 	for (uint8_t i = 0; i < 8; i++) {
@@ -379,7 +385,8 @@ ISR(RTC_PIT_vect) {
   if (color_time_out > 0) {
     color_time_out--;
     if (color_time_out == 0) {
-      PORTB_OUTCLR = 1 << 0;
+      PORTB_OUTCLR = 1 << 0; // turn off light
+      disable_adc();
     }
   }
 }
@@ -397,7 +404,7 @@ ISR(PORTA_PORT_vect) {
 
   output_color();
   color_time_out = 10; // 5 seconds
-  //// enable_adc();
+  enable_adc();
 }
 
 /*
@@ -405,7 +412,32 @@ ISR(PORTA_PORT_vect) {
   1k pull down => 0x0D (0.23 V)
 */
 ISR(ADC0_RESRDY_vect) {
+  // clear flag
   ADC0_INTFLAGS = ADC_RESRDY_bm;
+
+  // check results
+  // NO BUTTONS: 16000
+  //      MINUS:     0
+  //        SET:  3800
+  //       PLUS:  6200
+  uint16_t r = ADC0_RES;
+
+  if (r < 7500) {
+    // key pressed
+
+    if (r < 1000) {
+      // MINUS
+      t0--;
+    } else if (r < 5000) {
+      // SET
+    } else {
+      // PLUS
+      t0++;
+    }
+
+    update_lcd();
+    color_time_out = 10; // 5 seconds
+  }
 }
 
 int main(void) {
