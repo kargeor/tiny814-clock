@@ -12,8 +12,6 @@
 #include <avr/sleep.h>
 #include <util/delay.h>
 
-// #define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
-// #define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
 
 //
 #define gpio_data_high() PORTA_OUTSET = 1 << 7;
@@ -122,18 +120,20 @@ void update_lcd(void) {
     lcdB |= DIGIT3B[t3];
   }
 
-  if (hSec & 1) lcdA |= 1<<7;
+  if (hSec & 1) {
+    lcdA |= 1 << 7;
+  }
 
   if (lcdP) {
     dA = lcdA;
     dB = lcdB;
     lcdP = 0;
-    } else {
+  } else {
     dA = ~lcdA;
     dB = ~lcdB;
     lcdP = 1;
   }
-  
+
   gpio_latch_low();
 
   // output
@@ -162,7 +162,7 @@ void update_lcd(void) {
 
   if (lcdP) {
     gpio_lcd_com_high();
-    } else {
+  } else {
     gpio_lcd_com_low();
   }
 }
@@ -173,10 +173,10 @@ void start_and_use_32k_crystal(void) {
 
   CPU_CCP = CCP_IOREG_gc;   // Un-protect
   CLKCTRL_MCLKCTRLA = 0x02; // Use 32k crystal for main clock
-  
+
   while ((CLKCTRL_MCLKSTATUS & CLKCTRL_XOSC32KS_bm) == 0); // wait for stable 32k crystal
   while ((CLKCTRL_MCLKSTATUS & CLKCTRL_SOSC_bm) != 0); // wait for main clock switch
-  
+
   CPU_CCP = CCP_IOREG_gc; // Un-protect
   CLKCTRL_MCLKCTRLB = 0;  // Disable pre-scaler
 }
@@ -184,14 +184,14 @@ void start_and_use_32k_crystal(void) {
 void use_32k_crystal(void) {
   CPU_CCP = CCP_IOREG_gc;   // Un-protect
   CLKCTRL_MCLKCTRLA = 0x02; // Use 32k crystal for main clock
-  
+
   while ((CLKCTRL_MCLKSTATUS & CLKCTRL_SOSC_bm) != 0); // wait for main clock switch
 }
 
 void use_int_osc(void) {
   CPU_CCP = CCP_IOREG_gc;   // Un-protect
   CLKCTRL_MCLKCTRLA = 0x00; // Use internal 16/20Mhz osc for main clock
-  
+
   while ((CLKCTRL_MCLKSTATUS & CLKCTRL_SOSC_bm) != 0); // wait for main clock switch
 }
 
@@ -250,9 +250,12 @@ void neoPixel_output(void) {
 }
 
 void output_color(void) {
-  // enable NeoPixels
-  PORTB_OUTSET = 1 << 0;
-  
+  // enable NeoPixels (and wait if needed)
+  if (!(PORTB_OUT & 1)) {
+    PORTB_OUTSET = 1 << 0;
+    _delay_us(10); // actual delay is ~1000x more
+  }
+
   // fast speed
   cli();
   use_int_osc();
@@ -382,16 +385,19 @@ ISR(RTC_PIT_vect) {
 }
 
 ISR(PORTA_PORT_vect) {
-  PORTA_INTFLAGS = (1 << 2);
+  // clear interrupt flag
+  PORTA_INTFLAGS = 1 << 2;
 
-  if (color_time_out > 0) {
+  if (color_time_out > 0) { // do not change color on resume
     current_color++;
-    if (current_color == COLORS_COUNT) current_color = 0;
+    if (current_color == COLORS_COUNT) {
+      current_color = 0;
+    }      
   }
 
   output_color();
   color_time_out = 10; // 5 seconds
-  enable_adc();
+  //// enable_adc();
 }
 
 /*
@@ -403,11 +409,12 @@ ISR(ADC0_RESRDY_vect) {
 }
 
 int main(void) {
+  cli();
   disable_inputs();
   start_and_use_32k_crystal();
-  
+
   // Enable RTC
-  RTC_CLKSEL = 0x02; // Use Crystal
+  RTC_CLKSEL = 0x02; // Use Crystal/TOSC32K
   RTC_PITINTCTRL = 0x01; // Enable interrupt
   RTC_PITCTRLA = RTC_PERIOD_CYC16384_gc | RTC_PITEN_bm; // Enable every 16384
 
