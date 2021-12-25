@@ -36,14 +36,10 @@ static const uint16_t DIGIT2B[10] = { 3584, 512, 3072, 1536, 512, 1536, 3584, 51
 static const uint16_t DIGIT3A[10] = { 28672, 4096, 45056, 45056, 53248, 57344, 57344, 12288, 61440, 61440 };
 static const uint16_t DIGIT3B[10] = { 28672, 4096, 24576, 12288, 4096, 12288, 28672, 4096, 28672, 12288 };
 
-static volatile uint8_t t3 = 0; // hours X10
-static volatile uint8_t t2 = 0; // hours  X1
-static volatile uint8_t t1 = 0; // mins  X10
-static volatile uint8_t t0 = 0; // mins   X1
-
-static volatile uint8_t hSec = 0; // half-seconds
-
 static volatile uint8_t lcdP = 0; // polarity of LCD
+
+static volatile long millis = 0L; // milliseconds passed since midnight
+static const long ONE_DAY = 24L * 3600L * 1000L;
 
 /*
   Current test:
@@ -79,31 +75,6 @@ static const uint8_t colors[3 * COLORS_COUNT] =
 static volatile uint8_t current_color = 0;
 static volatile uint8_t color_time_out = 0; // in half-seconds
 
-void update_time(void) {
-  hSec++;
-
-  if (hSec >= 120) {
-    hSec = 0;
-    t0++;
-  }
-  if (t0 >= 10) {
-    t0 = 0;
-    t1++;
-  }
-  if (t1 >= 6) {
-    t1 = 0;
-    t2++;
-  }
-  if (t2 >= 10) {
-    t2 = 0;
-    t3++;
-  }
-  if (t3 >= 1 && t2 >= 2) {
-    t3 = 0;
-    t2 = 0;
-  }
-}
-
 void update_lcd(void) {
   uint16_t lcdA = 0; // LCD Content A
   uint16_t lcdB = 0; // LCD Content B
@@ -112,16 +83,25 @@ void update_lcd(void) {
   uint16_t i = 0;    // temp counter
   uint16_t d = 0;    // temp
 
-  lcdA = DIGIT0A[t0] | DIGIT1A[t1] | DIGIT2A[t2];
-  lcdB = DIGIT0B[t0] | DIGIT1B[t1] | DIGIT2B[t2];
+  long temp = millis / 500;
+  if (temp & 1) {
+    lcdA |= 1 << 7;
+  }
+  temp /= 2 * 60; // minutes
+  uint8_t t0 = temp % 10;
+  temp /= 10;
+  uint8_t t1 = temp % 6;
+  temp /= 6;
+  uint8_t t2 = temp % 10;
+  temp /= 10;
+  uint8_t t3 = temp;
+
+  lcdA |= DIGIT0A[t0] | DIGIT1A[t1] | DIGIT2A[t2];
+  lcdB |= DIGIT0B[t0] | DIGIT1B[t1] | DIGIT2B[t2];
 
   if (t3) {
     lcdA |= DIGIT3A[t3];
     lcdB |= DIGIT3B[t3];
-  }
-
-  if (hSec & 1) {
-    lcdA |= 1 << 7;
   }
 
   if (lcdP) {
@@ -379,9 +359,12 @@ ISR(RTC_PIT_vect) {
   // Clear flag
   RTC_PITINTFLAGS = 0x01;
 
-  update_time();
+  millis += 125;
+  if (millis >= ONE_DAY) {
+    millis -= ONE_DAY;
+  }
   update_lcd();
-  
+
   if (color_time_out > 0) {
     color_time_out--;
     if (color_time_out == 0) {
@@ -427,12 +410,12 @@ ISR(ADC0_RESRDY_vect) {
 
     if (r < 1000) {
       // MINUS
-      t0--;
+      millis -= 60000L;
     } else if (r < 5000) {
       // SET
     } else {
       // PLUS
-      t0++;
+      millis += 60000L;
     }
 
     update_lcd();
@@ -448,7 +431,7 @@ int main(void) {
   // Enable RTC
   RTC_CLKSEL = 0x02; // Use Crystal/TOSC32K
   RTC_PITINTCTRL = 0x01; // Enable interrupt
-  RTC_PITCTRLA = RTC_PERIOD_CYC16384_gc | RTC_PITEN_bm; // Enable every 16384
+  RTC_PITCTRLA = RTC_PERIOD_CYC4096_gc | RTC_PITEN_bm; // Enable, every 1/8 of a second
 
   // port direction
   PORTA_DIRSET = (1 << 3) | (1 << 4) | (1 << 5) | (1 << 7); // LCD
