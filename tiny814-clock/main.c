@@ -41,13 +41,26 @@ static volatile uint8_t lcdP = 0; // polarity of LCD
 static volatile MYTIME current_time = {0,0,0,0,0,0,0};
 static volatile MYTIME alarm_time = {0,7,3,0,0,0,0};
 
+static volatile uint8_t setting_color = 0;
+static volatile uint8_t setting_alarm = 0;
+static volatile uint8_t setting_24h = 0;
+
 enum {
   MODE_DEFAULT = 0,
   MODE_SECONDS = 1,
   MODE_ALARM   = 2,
-  MODES_COUNT  = 3,
+  MODE_SETTING = 3,
+  MODES_COUNT  = 4,
 };
 static volatile uint8_t mode = MODE_DEFAULT;
+
+enum {
+  SETTING_ALARM = 0,
+  SETTING_COLOR = 1,
+  SETTING_24H   = 2,
+  SETTING_COUNT = 3,
+};
+static volatile uint8_t current_setting = SETTING_ALARM;
 
 /*
   Current test:
@@ -101,8 +114,25 @@ void update_lcd(void) {
       t2 = current_time.hr0;
       t3 = current_time.hr1;
 
-      lcdA = DIGIT0A[t0] | DIGIT1A[t1] | DIGIT2A[t2];
-      lcdB = DIGIT0B[t0] | DIGIT1B[t1] | DIGIT2B[t2];
+      if (!setting_24h && (t3 == 2 || (t3 == 1 && t2 >= 2))) {
+        // add dot and convert to 12h
+        lcdB |= 1 << 8;
+        if (t3 == 1 && t2 > 2) {
+          t3 = 0;
+          t2 -= 2;
+        } else if (t3 == 2) {
+          if (t2 < 2) {
+            t3 = 0;
+            t2 += 8;
+          } else {
+            t3 = 1;
+            t2 -= 2;
+          }            
+        }
+      }
+
+      lcdA |= DIGIT0A[t0] | DIGIT1A[t1] | DIGIT2A[t2];
+      lcdB |= DIGIT0B[t0] | DIGIT1B[t1] | DIGIT2B[t2];
 
       if (t3) {
         lcdA |= DIGIT3A[t3];
@@ -120,8 +150,8 @@ void update_lcd(void) {
       t2 = current_time.min0;
       t3 = current_time.min1;
 
-      lcdA = DIGIT0A[t0] | DIGIT1A[t1] | DIGIT2A[t2] | DIGIT3A[t3];
-      lcdB = DIGIT0B[t0] | DIGIT1B[t1] | DIGIT2B[t2] | DIGIT3B[t3];
+      lcdA |= DIGIT0A[t0] | DIGIT1A[t1] | DIGIT2A[t2] | DIGIT3A[t3];
+      lcdB |= DIGIT0B[t0] | DIGIT1B[t1] | DIGIT2B[t2] | DIGIT3B[t3];
 
       if (current_time.frac >> 2) {
         lcdA |= 1 << 7;
@@ -137,8 +167,25 @@ void update_lcd(void) {
       t2 = alarm_time.hr0;
       t3 = alarm_time.hr1;
 
-      lcdA = DIGIT0A[t0] | DIGIT1A[t1] | DIGIT2A[t2];
-      lcdB = DIGIT0B[t0] | DIGIT1B[t1] | DIGIT2B[t2];
+      if (!setting_24h && (t3 == 2 || (t3 == 1 && t2 >= 2))) {
+        // add dot and convert to 12h
+        lcdB |= 1 << 8;
+        if (t3 == 1 && t2 > 2) {
+          t3 = 0;
+          t2 -= 2;
+          } else if (t3 == 2) {
+          if (t2 < 2) {
+            t3 = 0;
+            t2 += 8;
+            } else {
+            t3 = 1;
+            t2 -= 2;
+          }
+        }
+      }
+
+      lcdA |= DIGIT0A[t0] | DIGIT1A[t1] | DIGIT2A[t2];
+      lcdB |= DIGIT0B[t0] | DIGIT1B[t1] | DIGIT2B[t2];
 
       if (t3) {
         lcdA |= DIGIT3A[t3];
@@ -432,7 +479,7 @@ ISR(PORTA_PORT_vect) {
   }
 
   output_color();
-  color_time_out = 40; // 5 seconds
+  color_time_out = 100; // 12.5 seconds
   enable_adc();
 }
 
@@ -511,7 +558,7 @@ ISR(ADC0_RESRDY_vect) {
     }
 
     update_lcd();
-    color_time_out = 40; // 5 seconds
+    color_time_out = 100; // 12.5 seconds
   } else {
     // reset
     last_key = 0;
