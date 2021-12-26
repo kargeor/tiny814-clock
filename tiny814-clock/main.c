@@ -11,7 +11,7 @@
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
 #include <util/delay.h>
-
+#include "mytime.h"
 
 //
 #define gpio_data_high() PORTA_OUTSET = 1 << 7;
@@ -36,14 +36,9 @@ static const uint16_t DIGIT2B[10] = { 3584, 512, 3072, 1536, 512, 1536, 3584, 51
 static const uint16_t DIGIT3A[10] = { 28672, 4096, 45056, 45056, 53248, 57344, 57344, 12288, 61440, 61440 };
 static const uint16_t DIGIT3B[10] = { 28672, 4096, 24576, 12288, 4096, 12288, 28672, 4096, 28672, 12288 };
 
-static volatile uint8_t t3 = 0; // hours X10
-static volatile uint8_t t2 = 0; // hours  X1
-static volatile uint8_t t1 = 0; // mins  X10
-static volatile uint8_t t0 = 0; // mins   X1
-
-static volatile uint8_t hSec = 0; // half-seconds
-
 static volatile uint8_t lcdP = 0; // polarity of LCD
+
+static volatile MYTIME current_time = {0,0,0,0,0,0,0};
 
 /*
   Current test:
@@ -77,32 +72,8 @@ static const uint8_t colors[3 * COLORS_COUNT] =
 };
 
 static volatile uint8_t current_color = 0;
-static volatile uint8_t color_time_out = 0; // in half-seconds
+static volatile uint8_t color_time_out = 0; // in 1/8-seconds
 
-void update_time(void) {
-  hSec++;
-
-  if (hSec >= 120) {
-    hSec = 0;
-    t0++;
-  }
-  if (t0 >= 10) {
-    t0 = 0;
-    t1++;
-  }
-  if (t1 >= 6) {
-    t1 = 0;
-    t2++;
-  }
-  if (t2 >= 10) {
-    t2 = 0;
-    t3++;
-  }
-  if (t3 >= 1 && t2 >= 2) {
-    t3 = 0;
-    t2 = 0;
-  }
-}
 
 void update_lcd(void) {
   uint16_t lcdA = 0; // LCD Content A
@@ -111,6 +82,11 @@ void update_lcd(void) {
   uint16_t dB = 0;   // LCD Content with polarity
   uint16_t i = 0;    // temp counter
   uint16_t d = 0;    // temp
+  
+  uint8_t t0 = current_time.min0;
+  uint8_t t1 = current_time.min1;
+  uint8_t t2 = current_time.hr0;
+  uint8_t t3 = current_time.hr1;
 
   lcdA = DIGIT0A[t0] | DIGIT1A[t1] | DIGIT2A[t2];
   lcdB = DIGIT0B[t0] | DIGIT1B[t1] | DIGIT2B[t2];
@@ -120,7 +96,7 @@ void update_lcd(void) {
     lcdB |= DIGIT3B[t3];
   }
 
-  if (hSec & 1) {
+  if (current_time.frac >> 2) {
     lcdA |= 1 << 7;
   }
 
@@ -379,7 +355,7 @@ ISR(RTC_PIT_vect) {
   // Clear flag
   RTC_PITINTFLAGS = 0x01;
 
-  update_time();
+  mytime_add_fraction(&current_time);
   update_lcd();
   
   if (color_time_out > 0) {
@@ -403,7 +379,7 @@ ISR(PORTA_PORT_vect) {
   }
 
   output_color();
-  color_time_out = 10; // 5 seconds
+  color_time_out = 40; // 5 seconds
   enable_adc();
 }
 
@@ -427,16 +403,16 @@ ISR(ADC0_RESRDY_vect) {
 
     if (r < 1000) {
       // MINUS
-      t0--;
+      mytime_add_hour(&current_time);
     } else if (r < 5000) {
       // SET
     } else {
       // PLUS
-      t0++;
+      mytime_add_min(&current_time);
     }
 
     update_lcd();
-    color_time_out = 10; // 5 seconds
+    color_time_out = 40; // 5 seconds
   }
 }
 
@@ -448,7 +424,7 @@ int main(void) {
   // Enable RTC
   RTC_CLKSEL = 0x02; // Use Crystal/TOSC32K
   RTC_PITINTCTRL = 0x01; // Enable interrupt
-  RTC_PITCTRLA = RTC_PERIOD_CYC16384_gc | RTC_PITEN_bm; // Enable every 16384
+  RTC_PITCTRLA = RTC_PERIOD_CYC4096_gc | RTC_PITEN_bm; // Enable, every 1/8 of a second
 
   // port direction
   PORTA_DIRSET = (1 << 3) | (1 << 4) | (1 << 5) | (1 << 7); // LCD

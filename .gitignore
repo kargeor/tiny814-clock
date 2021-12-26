@@ -23,3 +23,5 @@ tiny814-clock/Release/tiny814-clock.map
 tiny814-clock/Release/tiny814-clock.srec
 tiny814-clock/tiny814-clock.componentinfo.xml
 tiny814-clock/tiny814-clock.cproj
+tiny814-clock/Debug/mytime.o
+tiny814-clock/Debug/mytime.d
