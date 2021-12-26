@@ -123,8 +123,11 @@ void update_lcd(void) {
       lcdA = DIGIT0A[t0] | DIGIT1A[t1] | DIGIT2A[t2] | DIGIT3A[t3];
       lcdB = DIGIT0B[t0] | DIGIT1B[t1] | DIGIT2B[t2] | DIGIT3B[t3];
 
-      if (current_time.frac & 1) {
+      if (current_time.frac >> 2) {
         lcdA |= 1 << 7;
+      }
+      if ((current_time.frac >> 1) & 1) {
+        lcdB |= 1 << 4;
       }
       break;
 
@@ -144,6 +147,10 @@ void update_lcd(void) {
       lcdA |= 1 << 7;
       break;
   }
+
+  // lcdB = 1 << 4;  // right dot
+  // lcdB = 1 << 8;  // middle dot / AM/PM
+  // lcdB = 1 << 15; // left dot / ALARM
 
   if (lcdP) {
     dA = lcdA;
@@ -366,7 +373,7 @@ void enable_adc(void) {
   ADC0_INTCTRL = ADC_RESRDY_bm;                                     // Result Ready interrupt
   ADC0_MUXPOS = 0x01;                                               // PA1
   ADC0_CTRLC = ADC_SAMPCAP_bm | ADC_REFSEL_VDDREF_gc;               // Use VDD Ref
-  ADC0_CTRLB = ADC_SAMPNUM_ACC64_gc;                                // Accumulate 64 samples
+  ADC0_CTRLB = ADC_SAMPNUM_ACC4_gc;                                 // Accumulate 4 samples
   ADC0_CTRLA = ADC_RESSEL_8BIT_gc | ADC_FREERUN_bm | ADC_ENABLE_bm; // Enable + Free Run
   ADC0_COMMAND = ADC_STCONV_bm;                                     // Start
 }
@@ -466,28 +473,49 @@ ISR(ADC0_RESRDY_vect) {
   ADC0_INTFLAGS = ADC_RESRDY_bm;
 
   // check results
-  // NO BUTTONS: 16000
-  //      MINUS:     0
-  //        SET:  3800
-  //       PLUS:  6200
+  // NO BUTTONS: 1020
+  //      MINUS:    0
+  //        SET:  244
+  //       PLUS:  392
   uint16_t r = ADC0_RES;
 
-  if (r < 7500) {
-    // key pressed
+  static volatile uint8_t last_key = 0;
+  static volatile uint16_t key_counter = 0;
 
-    if (r < 1000) {
+  if (r < 500) {
+    // key pressed, do filtering/counting
+    uint8_t cur_key = 0;
+
+    if (r < 100) {
       // MINUS
-      button_press(1);
-    } else if (r < 5500) {
+      cur_key = 1;
+    } else if (r < 300) {
       // SET
-      button_press(2);
+      cur_key = 2;
     } else {
       // PLUS
-      button_press(3);
+      cur_key = 3;
+    }
+    
+    if (cur_key == last_key) {
+      key_counter++;
+      if (key_counter == 2) {
+        button_press(last_key);
+      } else if (key_counter >= 8) {
+        key_counter = 0;
+      }
+    } else {
+      // reset
+      last_key = cur_key;
+      key_counter = 0;
     }
 
     update_lcd();
     color_time_out = 40; // 5 seconds
+  } else {
+    // reset
+    last_key = 0;
+    key_counter = 0;
   }
 }
 
