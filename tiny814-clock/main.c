@@ -39,6 +39,15 @@ static const uint16_t DIGIT3B[10] = { 28672, 4096, 24576, 12288, 4096, 12288, 28
 static volatile uint8_t lcdP = 0; // polarity of LCD
 
 static volatile MYTIME current_time = {0,0,0,0,0,0,0};
+static volatile MYTIME alarm_time = {0,7,3,0,0,0,0};
+
+enum {
+  MODE_DEFAULT = 0,
+  MODE_SECONDS = 1,
+  MODE_ALARM   = 2,
+  MODES_COUNT  = 3,
+};
+static volatile uint8_t mode = MODE_DEFAULT;
 
 /*
   Current test:
@@ -82,22 +91,58 @@ void update_lcd(void) {
   uint16_t dB = 0;   // LCD Content with polarity
   uint16_t i = 0;    // temp counter
   uint16_t d = 0;    // temp
-  
-  uint8_t t0 = current_time.min0;
-  uint8_t t1 = current_time.min1;
-  uint8_t t2 = current_time.hr0;
-  uint8_t t3 = current_time.hr1;
 
-  lcdA = DIGIT0A[t0] | DIGIT1A[t1] | DIGIT2A[t2];
-  lcdB = DIGIT0B[t0] | DIGIT1B[t1] | DIGIT2B[t2];
+  uint8_t t0, t1, t2, t3;
 
-  if (t3) {
-    lcdA |= DIGIT3A[t3];
-    lcdB |= DIGIT3B[t3];
-  }
+  switch (mode) {
+    case MODE_DEFAULT:
+      t0 = current_time.min0;
+      t1 = current_time.min1;
+      t2 = current_time.hr0;
+      t3 = current_time.hr1;
 
-  if (current_time.frac >> 2) {
-    lcdA |= 1 << 7;
+      lcdA = DIGIT0A[t0] | DIGIT1A[t1] | DIGIT2A[t2];
+      lcdB = DIGIT0B[t0] | DIGIT1B[t1] | DIGIT2B[t2];
+
+      if (t3) {
+        lcdA |= DIGIT3A[t3];
+        lcdB |= DIGIT3B[t3];
+      }
+
+      if (current_time.frac >> 2) {
+        lcdA |= 1 << 7;
+      }
+      break;
+
+    case MODE_SECONDS:
+      t0 = current_time.sec0;
+      t1 = current_time.sec1;
+      t2 = current_time.min0;
+      t3 = current_time.min1;
+
+      lcdA = DIGIT0A[t0] | DIGIT1A[t1] | DIGIT2A[t2] | DIGIT3A[t3];
+      lcdB = DIGIT0B[t0] | DIGIT1B[t1] | DIGIT2B[t2] | DIGIT3B[t3];
+
+      if (current_time.frac & 1) {
+        lcdA |= 1 << 7;
+      }
+      break;
+
+    case MODE_ALARM:
+      t0 = alarm_time.min0;
+      t1 = alarm_time.min1;
+      t2 = alarm_time.hr0;
+      t3 = alarm_time.hr1;
+
+      lcdA = DIGIT0A[t0] | DIGIT1A[t1] | DIGIT2A[t2];
+      lcdB = DIGIT0B[t0] | DIGIT1B[t1] | DIGIT2B[t2];
+
+      if (t3) {
+        lcdA |= DIGIT3A[t3];
+        lcdB |= DIGIT3B[t3];
+      }
+      lcdA |= 1 << 7;
+      break;
   }
 
   if (lcdP) {
@@ -253,15 +298,16 @@ void output_color(void) {
   use_32k_crystal();
 }
 
+/*
 void dac_play(void) {
   // change speed
   cli();
   use_int_osc();
-  
+
   // turn on DAC and select VREF
   VREF_CTRLA = 0x03; // 4.3V
   DAC0_CTRLA = DAC_ENABLE_bm | DAC_OUTEN_bm;
-  
+
   uint16_t i = 0;
   for (i = 0; i < 2000; i++) {
     DAC0_DATA = 0x00;
@@ -275,7 +321,7 @@ void dac_play(void) {
     DAC0_DATA = 0xFF;
     _delay_us(300);
   }
-  
+
   // disable DAC
   DAC0_CTRLA = 0x00;
   VREF_CTRLA = 0x00;
@@ -283,7 +329,7 @@ void dac_play(void) {
   // restore speed
   use_32k_crystal();
   // sei(); ??
-}
+}*/
 
 /*
 void speaker_play(void) {
@@ -383,6 +429,34 @@ ISR(PORTA_PORT_vect) {
   enable_adc();
 }
 
+void button_press(uint8_t button) {
+  if (button == 2) {
+    mode++;
+    if (mode == MODES_COUNT) {
+      mode = 0;
+    }
+    return;
+  }
+
+  switch (mode) {
+    case MODE_DEFAULT:
+      if (button == 1) mytime_add_hour(&current_time);
+      if (button == 3) mytime_add_min(&current_time);
+      break;
+
+    case MODE_SECONDS:
+      current_time.sec0 = 0;
+      current_time.sec1 = 0;
+      current_time.frac = 0;
+      break;
+
+    case MODE_ALARM:
+      if (button == 1) mytime_add_hour(&alarm_time);
+      if (button == 3) mytime_add_min(&alarm_time);
+      break;
+  }
+}
+
 /*
   PU only      => 0xFF (4.50 V) ~20 kOhm
   1k pull down => 0x0D (0.23 V)
@@ -403,12 +477,13 @@ ISR(ADC0_RESRDY_vect) {
 
     if (r < 1000) {
       // MINUS
-      mytime_add_hour(&current_time);
-    } else if (r < 5000) {
+      button_press(1);
+    } else if (r < 5500) {
       // SET
+      button_press(2);
     } else {
       // PLUS
-      mytime_add_min(&current_time);
+      button_press(3);
     }
 
     update_lcd();
